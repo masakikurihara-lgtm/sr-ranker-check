@@ -1,0 +1,6 @@
+streamlit
+requests
+pandas
+numpy
+# タイムゾーン処理や日付解析のために標準的なライブラリを含める
+python-dateutil

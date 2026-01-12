@@ -126,17 +126,52 @@ def _safe_get(data, keys, default_value=None):
         return default_value
     return temp
 
-# --- 表示ロジック（既存のデザイン・項目を完全再現） ---
+# --- 表示ロジック（デザイン維持＋ヘッダー固定＋高さ制限） ---
 def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=None):
     now_str = datetime.datetime.now(JST).strftime('%Y/%m/%d %H:%M:%S')
     st.caption(f"（取得時刻: {now_str} 現在）")
     
+    # CSS修正: max-heightを追加し、thにstickyを設定して固定
     custom_styles = """
     <style>
-    .basic-info-table-wrapper { width: 100%; margin: 0 auto; overflow-x: auto; }
-    .basic-info-table { border-collapse: collapse; width: 100%; margin-top: 10px; }
-    .basic-info-table th { text-align: center !important; background-color: #e8eaf6; color: #1a237e; font-weight: bold; padding: 8px 10px; border: 1px solid #c5cae9; white-space: nowrap; }
-    .basic-info-table td { text-align: center !important; padding: 8px 10px; line-height: 1.4; border: 1px solid #f0f0f0; white-space: nowrap; font-weight: 600; }
+    .basic-info-table-wrapper { 
+        width: 100%; 
+        margin: 0 auto; 
+        overflow-y: auto; 
+        max-height: 70vh; /* 画面高さの70%で固定 */
+        border: 1px solid #c5cae9;
+    }
+    .basic-info-table { 
+        border-collapse: separate; /* stickyのためにseparateに変更 */
+        border-spacing: 0;
+        width: 100%; 
+    }
+    .basic-info-table th { 
+        position: sticky; 
+        top: 0; 
+        z-index: 10;
+        text-align: center !important; 
+        background-color: #e8eaf6; 
+        color: #1a237e; 
+        font-weight: bold; 
+        padding: 8px 10px; 
+        border-bottom: 1px solid #c5cae9; 
+        border-right: 1px solid #c5cae9;
+        white-space: nowrap; 
+    }
+    .basic-info-table td { 
+        text-align: center !important; 
+        padding: 8px 10px; 
+        line-height: 1.4; 
+        border-bottom: 1px solid #f0f0f0; 
+        border-right: 1px solid #f0f0f0;
+        white-space: nowrap; 
+        font-weight: 600; 
+    }
+    /* 最後の列のボーダーを除去 */
+    .basic-info-table th:last-child, .basic-info-table td:last-child {
+        border-right: none;
+    }
     .basic-info-table tbody tr:hover { background-color: #f7f9fd; }
     .basic-info-highlight-upper { background-color: #e3f2fd !important; color: #0d47a1; }
     .basic-info-highlight-lower { background-color: #fff9c4 !important; color: #795548; }
@@ -221,7 +256,19 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
             df_dl = pd.DataFrame(csv_data, columns=headers)
             st.download_button("📥 CSVをダウンロード", df_dl.to_csv(index=False).encode('utf-8-sig'), f"showroom_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", "text/csv")
 
-    st.markdown(f'<div class="basic-info-table-wrapper"><table class="basic-info-table"><thead><tr>{"".join(f"<th>{h}</th>" for h in headers)}</tr></thead><tbody>{"".join(rows_html)}</tbody></table></div>', unsafe_allow_html=True)
+    # テーブルの出力
+    st.markdown(f'''
+    <div class="basic-info-table-wrapper">
+        <table class="basic-info-table">
+            <thead>
+                <tr>{"".join(f"<th>{h}</th>" for h in headers)}</tr>
+            </thead>
+            <tbody>
+                {"".join(rows_html)}
+            </tbody>
+        </table>
+    </div>
+    ''', unsafe_allow_html=True)
 
 # --- スキャン実行 ---
 def run_scan(id_list, update_ftp=False, existing_past_ids=None):
@@ -259,12 +306,11 @@ if not st.session_state.authenticated:
                 try:
                     response = requests.get(ROOM_LIST_URL, timeout=10)
                     response.raise_for_status()
-                    # CSVからIDリストを取得（1列目を認証コードとして扱う）
                     valid_codes = set(str(x).strip() for x in pd.read_csv(io.StringIO(response.text), header=None, dtype=str).iloc[:, 0].dropna())
                     
                     if auth_input.strip() in valid_codes:
                         st.session_state.authenticated = True
-                        st.rerun() # ← これにより即座に画面を切り替える
+                        st.rerun()
                     else:
                         st.error("❌ 認証コードが無効です。")
                 except Exception as e:

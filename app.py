@@ -4,12 +4,13 @@ import pandas as pd
 import io
 import datetime
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 JST = datetime.timezone(datetime.timedelta(hours=9))
 
 # Streamlit の初期設定
 st.set_page_config(
-    page_title="SHOWROOM ルームステータス確認ツール（簡易一括版）",
+    page_title="SHOWROOM ルームステータス確認ツール（高速一括版）",
     layout="wide"
 )
 
@@ -24,7 +25,6 @@ GENRE_MAP = {
 }
 
 # --- SHOWランクの定義（順序付け用） ---
-# 下記リストのインデックスが小さいほど「上位ランク」として扱う
 RANK_ORDER = [
     "SS-5", "SS-4", "SS-3", "SS-2", "SS-1",
     "S-5", "S-4", "S-3", "S-2", "S-1",
@@ -50,64 +50,29 @@ def get_room_profile(room_id):
     """ライバー（ルーム）プロフィール情報APIからデータを取得する"""
     url = ROOM_PROFILE_API.format(room_id=room_id)
     try:
-        response = requests.get(url, timeout=10)
+        # タイムアウトを少し短めに設定し、スタックを防ぐ
+        response = requests.get(url, timeout=5)
         response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException:
-        return None
+        return room_id, response.json()
+    except Exception:
+        return room_id, None
 
 def display_multiple_room_status(all_room_data):
     """取得した複数のルームデータを一覧表示し、ダウンロード機能を提供する"""
 
-    # 現在時刻の取得
     now_str = datetime.datetime.now(JST).strftime('%Y/%m/%d %H:%M:%S')
     st.caption(f"（取得時刻: {now_str} 現在）")
     
-    # --- カスタムCSS ---
     custom_styles = """
     <style>
-    .basic-info-table-wrapper {
-        width: 100%;
-        margin: 0 auto;
-        overflow-x: auto;
-    }
-    .basic-info-table {
-        border-collapse: collapse;
-        width: 100%; 
-        margin-top: 10px;
-    }
-    .basic-info-table th {
-        text-align: center !important; 
-        background-color: #e8eaf6; 
-        color: #1a237e; 
-        font-weight: bold;
-        padding: 8px 10px; 
-        border: 1px solid #c5cae9; 
-        white-space: nowrap;
-    }
-    .basic-info-table td {
-        text-align: center !important; 
-        padding: 8px 10px; 
-        line-height: 1.4;
-        border: 1px solid #f0f0f0;
-        white-space: nowrap;
-        font-weight: 600;
-    }
-    .basic-info-table tbody tr:hover {
-        background-color: #f7f9fd; 
-    }
-    .basic-info-highlight-upper {
-        background-color: #e3f2fd !important;
-        color: #0d47a1;
-    }
-    .basic-info-highlight-lower {
-        background-color: #fff9c4 !important;
-        color: #795548;
-    }
-    .room-link {
-        text-decoration: underline;
-        color: #1f2937;
-    }
+    .basic-info-table-wrapper { width: 100%; margin: 0 auto; overflow-x: auto; }
+    .basic-info-table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+    .basic-info-table th { text-align: center !important; background-color: #e8eaf6; color: #1a237e; font-weight: bold; padding: 8px 10px; border: 1px solid #c5cae9; white-space: nowrap; }
+    .basic-info-table td { text-align: center !important; padding: 8px 10px; line-height: 1.4; border: 1px solid #f0f0f0; white-space: nowrap; font-weight: 600; }
+    .basic-info-table tbody tr:hover { background-color: #f7f9fd; }
+    .basic-info-highlight-upper { background-color: #e3f2fd !important; color: #0d47a1; }
+    .basic-info-highlight-lower { background-color: #fff9c4 !important; color: #795548; }
+    .room-link { text-decoration: underline; color: #1f2937; }
     </style>
     """
     st.markdown(custom_styles, unsafe_allow_html=True)
@@ -117,22 +82,15 @@ def display_multiple_room_status(all_room_data):
         "下位ランクまでのスコア", "フォロワー数", "まいにち配信", "ジャンル", "公式 or フリー"
     ]
 
-    # 数値フォーマットと判定ロジック
     def is_within_30000(value):
-        try:
-            return int(value) <= 30000
-        except (TypeError, ValueError):
-            return False
+        try: return int(value) <= 30000
+        except: return False
 
     def format_value(value):
-        if value == "-" or value is None:
-            return "-"
-        try:
-            return f"{int(value):,}"
-        except (ValueError, TypeError):
-            return str(value)
+        if value == "-" or value is None: return "-"
+        try: return f"{int(value):,}"
+        except: return str(value)
 
-    # --- データ処理（フィルタリングとソート） ---
     processed_list = []
     for room_id, profile_data in all_room_data.items():
         if not profile_data:
@@ -140,14 +98,11 @@ def display_multiple_room_status(all_room_data):
             
         show_rank = _safe_get(profile_data, ["show_rank_subdivided"], "-")
         
-        # B-5以上のランクのみを抽出
         if show_rank in RANK_ORDER:
-            rank_index = RANK_ORDER.index(show_rank) # 小さいほど上位
+            rank_index = RANK_ORDER.index(show_rank)
             next_score = _safe_get(profile_data, ["next_score"], 0)
-            try:
-                next_score_int = int(next_score)
-            except (ValueError, TypeError):
-                next_score_int = 999999999 # スコアが取れない場合は末尾へ
+            try: next_score_int = int(next_score)
+            except: next_score_int = 999999999
             
             processed_list.append({
                 "room_id": room_id,
@@ -156,10 +111,9 @@ def display_multiple_room_status(all_room_data):
                 "next_score_int": next_score_int
             })
 
-    # ソート実行: 第一キー＝ランク順（昇順＝SS-5が0番目）、第二キー＝上位までのスコア（昇順）
+    # ソート
     processed_list.sort(key=lambda x: (x["rank_index"], x["next_score_int"]))
 
-    # 表示用HTML行とCSV用データリストを作成
     rows_html = []
     csv_data = []
 
@@ -167,7 +121,6 @@ def display_multiple_room_status(all_room_data):
         room_id = item["room_id"]
         profile_data = item["profile_data"]
 
-        # データの安全な抽出
         room_name = _safe_get(profile_data, ["room_name"], "取得失敗")
         room_level = _safe_get(profile_data, ["room_level"], "-")
         show_rank = _safe_get(profile_data, ["show_rank_subdivided"], "-")
@@ -182,7 +135,6 @@ def display_multiple_room_status(all_room_data):
         genre_name = GENRE_MAP.get(genre_id, f"その他 ({genre_id})" if genre_id else "-")
         room_url = f"https://www.showroom-live.com/room/profile?room_id={room_id}"
         
-        # --- HTML表示用の処理 ---
         room_name_cell = f'<a href="{room_url}" target="_blank" class="room-link">{room_name}</a>'
         display_values = [
             room_name_cell, format_value(room_level), show_rank, format_value(next_score), 
@@ -201,25 +153,17 @@ def display_multiple_room_status(all_room_data):
             td_html.append(f'<td class="{css_class}">{value}</td>')
         
         rows_html.append(f"<tr>{''.join(td_html)}</tr>")
+        csv_data.append([room_name, room_level, show_rank, next_score, prev_score, follower_num, live_continuous_days, genre_name, official_status])
 
-        # --- CSV用の処理（HTMLタグを含まない純粋なデータ） ---
-        csv_data.append([
-            room_name, room_level, show_rank, next_score, prev_score, 
-            follower_num, live_continuous_days, genre_name, official_status
-        ])
-
-    # 該当なしの場合のメッセージ
     if not rows_html:
         st.info("B-5以上の条件に一致するルームが見つかりませんでした。")
         return
 
-    # タイトルとダウンロードボタンのレイアウト
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.markdown("<h1 style='font-size:22px; text-align:left; color:#1f2937; padding: 15px 0px 5px 0px;'>📊 ルーム基本情報一覧</h1>", unsafe_allow_html=True)
+        st.markdown(f"<h1 style='font-size:22px; text-align:left; color:#1f2937; padding: 15px 0px 5px 0px;'>📊 ルーム基本情報一覧 ({len(processed_list)}件ヒット)</h1>", unsafe_allow_html=True)
     
     with col2:
-        # ダウンロードボタンの設置
         if csv_data:
             df_download = pd.DataFrame(csv_data, columns=headers)
             csv = df_download.to_csv(index=False).encode('utf-8-sig')
@@ -230,62 +174,38 @@ def display_multiple_room_status(all_room_data):
                 mime="text/csv",
             )
 
-    # テーブルの表示
     html_content = f"""
     <div class="basic-info-table-wrapper">
         <table class="basic-info-table">
-            <thead>
-                <tr>{"".join(f'<th>{h}</th>' for h in headers)}</tr>
-            </thead>
-            <tbody>
-                {"".join(rows_html)}
-            </tbody>
+            <thead><tr>{"".join(f'<th>{h}</th>' for h in headers)}</tr></thead>
+            <tbody>{"".join(rows_html)}</tbody>
         </table>
     </div>
     """
     st.markdown(html_content, unsafe_allow_html=True)
 
 # --- メインロジック ---
-if 'authenticated' not in st.session_state:
-    st.session_state.authenticated = False
-if 'show_status' not in st.session_state:
-    st.session_state.show_status = False
-if 'input_room_ids' not in st.session_state:
-    st.session_state.input_room_ids = ""
+if 'authenticated' not in st.session_state: st.session_state.authenticated = False
+if 'show_status' not in st.session_state: st.session_state.show_status = False
+if 'input_room_ids' not in st.session_state: st.session_state.input_room_ids = ""
 
 if not st.session_state.authenticated:
-    st.markdown("<h1 style='font-size:28px; text-align:left; color:#1f2937;'>💖 SHOWROOM ルームステータス確認ツール（簡易一括版）</h1>", unsafe_allow_html=True)
-    st.markdown("##### 🔑 認証コードを入力してください")
-    input_auth_code = st.text_input("認証コードを入力してください:", placeholder="認証コード", type="password", key="room_id_input_auth")
-    
+    st.markdown("<h1 style='font-size:28px; text-align:left; color:#1f2937;'>💖 SHOWROOM ルームステータス確認ツール</h1>", unsafe_allow_html=True)
+    input_auth_code = st.text_input("認証コードを入力してください:", type="password")
     if st.button("認証する"):
-        if input_auth_code:
-            with st.spinner("認証中..."):
-                try:
-                    response = requests.get(ROOM_LIST_URL, timeout=5)
-                    response.raise_for_status()
-                    room_df = pd.read_csv(io.StringIO(response.text), header=None, dtype=str)
-                    valid_codes = set(str(x).strip() for x in room_df.iloc[:, 0].dropna())
-                    if input_auth_code.strip() in valid_codes:
-                        st.session_state.authenticated = True
-                        st.rerun()
-                    else:
-                        st.error("❌ 認証コードが無効です。")
-                except Exception as e:
-                    st.error(f"認証リストを取得できませんでした: {e}")
+        try:
+            response = requests.get(ROOM_LIST_URL, timeout=5)
+            room_df = pd.read_csv(io.StringIO(response.text), header=None, dtype=str)
+            if input_auth_code.strip() in set(room_df.iloc[:, 0].dropna()):
+                st.session_state.authenticated = True
+                st.rerun()
+            else: st.error("❌ 認証コードが無効です。")
+        except Exception as e: st.error(f"接続エラー: {e}")
     st.stop()
 
 if st.session_state.authenticated:
-    st.markdown("<h1 style='font-size:28px; text-align:left; color:#1f2937;'>💖 SHOWROOM ルームステータス確認ツール（簡易一括版）</h1>", unsafe_allow_html=True)
-    st.markdown("##### 🔎 ルームIDの入力")
-
-    input_text = st.text_area(
-        "表示したいルームIDを入力してください（複数ある場合はカンマ、スペース、改行で区切ってください）:",
-        placeholder="例: 123456, 789012",
-        key="room_ids_input_area",
-        value=st.session_state.input_room_ids,
-        help="複数のIDをまとめて入力して一括比較できます。"
-    ).strip()
+    st.markdown("##### 🔎 ルームIDの入力（大量データ対応版）")
+    input_text = st.text_area("ルームIDを入力:", value=st.session_state.input_room_ids, height=200).strip()
     
     if input_text != st.session_state.input_room_ids:
         st.session_state.input_room_ids = input_text
@@ -294,18 +214,35 @@ if st.session_state.authenticated:
     if st.button("ルームステータスを表示"):
         if st.session_state.input_room_ids:
             st.session_state.show_status = True
-        else:
-            st.warning("ルームIDを入力してください。")
+        else: st.warning("ルームIDを入力してください。")
             
     if st.session_state.show_status and st.session_state.input_room_ids:
         id_list = [rid.strip() for rid in re.split(r'[,\s\n]+', st.session_state.input_room_ids) if rid.strip().isdigit()]
         
         if not id_list:
-            st.error("有効なルームID（数字）が見つかりませんでした。")
+            st.error("有効なルームIDが見つかりませんでした。")
         else:
             all_results = {}
-            with st.spinner(f"{len(id_list)} 件のルーム情報を取得中..."):
-                for rid in id_list:
-                    all_results[rid] = get_room_profile(rid)
+            progress_bar = st.progress(0)
+            status_text = st.empty()
             
+            # --- 並列処理の実装 (ThreadPoolExecutor) ---
+            # 6000件超えのため、スレッド数は多めの50程度に設定
+            with st.spinner(f"{len(id_list)} 件の情報を取得中..."):
+                with ThreadPoolExecutor(max_workers=50) as executor:
+                    future_to_id = {executor.submit(get_room_profile, rid): rid for rid in id_list}
+                    
+                    for i, future in enumerate(as_completed(future_to_id)):
+                        rid, res = future.result()
+                        if res:
+                            all_results[rid] = res
+                        
+                        # 進捗表示（100件ごとに更新して負荷を軽減）
+                        if i % 100 == 0 or i == len(id_list) - 1:
+                            progress = (i + 1) / len(id_list)
+                            progress_bar.progress(progress)
+                            status_text.text(f"取得中: {i+1} / {len(id_list)}")
+
+            progress_bar.empty()
+            status_text.empty()
             display_multiple_room_status(all_results)

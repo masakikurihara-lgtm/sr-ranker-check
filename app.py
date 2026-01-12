@@ -126,7 +126,7 @@ def _safe_get(data, keys, default_value=None):
         return default_value
     return temp
 
-# --- 表示ロジック（既存の表示要領を完全再現） ---
+# --- 表示ロジック（既存のデザイン・項目を完全再現） ---
 def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=None):
     now_str = datetime.datetime.now(JST).strftime('%Y/%m/%d %H:%M:%S')
     st.caption(f"（取得時刻: {now_str} 現在）")
@@ -169,7 +169,6 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
                 "next": int(_safe_get(p, ["next_score"], 99999999))
             })
 
-    # 名簿追加保存
     if update_ftp:
         base_ids = existing_past_ids if existing_past_ids else set()
         merged_ids = base_ids.union(found_b5_above_ids)
@@ -179,7 +178,6 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
         except Exception as e:
             st.error(f"FTP保存失敗: {e}")
 
-    # ソート
     processed_list.sort(key=lambda x: (x["rank_idx"], x["next"]))
 
     rows_html = []
@@ -203,7 +201,6 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
         gen_name = GENRE_MAP.get(genre_id, f"その他 ({genre_id})" if genre_id else "-")
         url = f"https://www.showroom-live.com/room/profile?room_id={rid}"
         
-        # HTML
         name_cell = f'<a href="{url}" target="_blank" class="room-link">{name}</a>'
         display_vals = [name_cell, format_value(level), rank, format_value(n_score), format_value(p_score), format_value(fol), format_value(days), gen_name, off_stat]
         
@@ -214,11 +211,8 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
             elif headers[i] == "下位ランクまでのスコア" and is_within_30000(p_score): cls = "basic-info-highlight-lower"
             td_html.append(f'<td class="{cls}">{val}</td>')
         rows_html.append(f"<tr>{''.join(td_html)}</tr>")
-
-        # CSV
         csv_data.append([name, level, rank, n_score, p_score, fol, days, gen_name, off_stat])
 
-    # 表示
     col1, col2 = st.columns([3, 1])
     with col1:
         st.markdown("<h1 style='font-size:22px; text-align:left; color:#1f2937; padding: 15px 0px 5px 0px;'>📊 ルーム基本情報一覧</h1>", unsafe_allow_html=True)
@@ -229,7 +223,7 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
 
     st.markdown(f'<div class="basic-info-table-wrapper"><table class="basic-info-table"><thead><tr>{"".join(f"<th>{h}</th>" for h in headers)}</tr></thead><tbody>{"".join(rows_html)}</tbody></table></div>', unsafe_allow_html=True)
 
-# --- 実行制御 ---
+# --- スキャン実行 ---
 def run_scan(id_list, update_ftp=False, existing_past_ids=None):
     if not id_list:
         st.warning("処理対象のIDがありません。")
@@ -249,25 +243,40 @@ def run_scan(id_list, update_ftp=False, existing_past_ids=None):
     
     display_multiple_results(all_results, update_ftp, existing_past_ids)
 
-# --- メイン UI ---
-if 'authenticated' not in st.session_state: st.session_state.authenticated = False
+# --- 認証 & UI メインロジック ---
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+
+# 未認証時の処理
 if not st.session_state.authenticated:
-    st.title("💖 SHOWROOM 統合管理ツール")
-    auth_code = st.text_input("認証コード:", type="password")
-    if st.button("ログイン"):
-        try:
-            res = requests.get(ROOM_LIST_URL)
-            if auth_code in res.text:
-                st.session_state.authenticated = True
-                st.rerun()
-        except: st.error("認証エラー")
+    st.markdown("<h1 style='font-size:28px; text-align:left; color:#1f2937;'>💖 SHOWROOM 巡回管理システム</h1>", unsafe_allow_html=True)
+    st.markdown("##### 🔑 認証コードを入力してください")
+    auth_input = st.text_input("認証コード:", type="password", key="auth_input_field")
+    
+    if st.button("認証する"):
+        if auth_input:
+            with st.spinner("認証リストを確認中..."):
+                try:
+                    response = requests.get(ROOM_LIST_URL, timeout=10)
+                    response.raise_for_status()
+                    # CSVからIDリストを取得（1列目を認証コードとして扱う）
+                    valid_codes = set(str(x).strip() for x in pd.read_csv(io.StringIO(response.text), header=None, dtype=str).iloc[:, 0].dropna())
+                    
+                    if auth_input.strip() in valid_codes:
+                        st.session_state.authenticated = True
+                        st.rerun() # ← これにより即座に画面を切り替える
+                    else:
+                        st.error("❌ 認証コードが無効です。")
+                except Exception as e:
+                    st.error(f"認証リストの取得に失敗しました: {e}")
     st.stop()
 
+# 認証済み時のメイン画面
 st.title("💖 SHOWROOM ステータス自動巡回ツール")
 tab1, tab2 = st.tabs(["自動スキャン（イベント＋名簿蓄積）", "手動ID入力"])
 
 with tab1:
-    st.markdown("「最新のイベント参加者」＋「過去に見つけたB-5以上」を合算して精査します。")
+    st.markdown("「最新のイベント参加者」＋「過去に見つけたB-5以上」を合算して精査・蓄積します。")
     if st.button("🚀 スキャン開始（名簿蓄積実行）"):
         session = create_session()
         with get_ftp_connection() as ftp:
@@ -275,14 +284,14 @@ with tab1:
         
         st.write(f"📁 現在の名簿数: {len(past_ids)} 件")
         
-        with st.spinner("最新イベントを検索中..."):
+        with st.spinner("最新イベントからルームを抽出中..."):
             event_ids = get_event_ids(session)
             event_room_ids = set()
             for eid in event_ids:
                 event_room_ids.update(get_room_ids_from_event(session, eid))
         
         total_unique_ids = list(past_ids.union(event_room_ids))
-        st.write(f"🔄 検索対象合計（重複除外後）: {len(total_unique_ids)} 件")
+        st.write(f"🔄 検索対象合計（重複排除後）: {len(total_unique_ids)} 件")
         
         run_scan(total_unique_ids, update_ftp=True, existing_past_ids=past_ids)
 

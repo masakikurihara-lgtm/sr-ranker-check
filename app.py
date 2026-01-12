@@ -15,7 +15,7 @@ JST = datetime.timezone(datetime.timedelta(hours=9))
 
 # --- 設定 ---
 st.set_page_config(
-    page_title="SHOWROOM 高精度・ID蓄積型巡回ツール",
+    page_title="SHOWROOM ランカーチェッカー",
     layout="wide"
 )
 
@@ -264,7 +264,7 @@ if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    st.markdown("<h1 style='font-size:28px; text-align:left; color:#1f2937;'>💖 SHOWROOM 巡回管理システム</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='font-size:28px; text-align:left; color:#1f2937;'>💖 SHOWROOM ランカーチェッカー</h1>", unsafe_allow_html=True)
     st.markdown("##### 🔑 認証コードを入力してください")
     auth_input = st.text_input("認証コード:", type="password", key="auth_input_field")
     
@@ -284,11 +284,11 @@ if not st.session_state.authenticated:
                     st.error(f"認証リストの取得に失敗しました: {e}")
     st.stop()
 
-st.title("💖 SHOWROOM ステータス自動巡回ツール")
-tab1, tab2 = st.tabs(["自動スキャン（イベント＋名簿蓄積）", "手動ID入力"])
+st.title("💖 SHOWROOM ランカーチェッカー")
+tab1, tab2 = st.tabs(["自動スキャン", "手動ID入力"])
 
 with tab1:
-    st.markdown("「最新のイベント参加者」＋「過去に見つけたB-5以上」を合算して精査・蓄積します。")
+    # st.markdown("「最新のイベント参加者」＋「過去に見つけたB-5以上」を合算して精査・蓄積します。")
     if st.button("🚀 スキャン開始（名簿蓄積実行）"):
         session = create_session()
         with get_ftp_connection() as ftp:
@@ -297,12 +297,13 @@ with tab1:
         st.write(f"📁 現在の名簿数: {len(past_ids)} 件")
         
         # --- イベントからのルーム抽出（進捗バー付き） ---
-        with st.spinner("最新イベント一覧を取得中..."):
+        with st.spinner("対象ルーム候補を取得中..."):
             event_ids = get_event_ids(session)
         
         event_room_ids = set()
         if event_ids:
-            st.info(f"合計 {len(event_ids)} 件のイベントからルームを抽出しています...")
+            # st.info(f"合計 {len(event_ids)} 件のイベントからルームを抽出しています...")
+            st.info(f"対象ルーム候補を取得しています...")
             ev_progress = st.progress(0)
             for i, eid in enumerate(event_ids):
                 event_room_ids.update(get_room_ids_from_event(session, eid))

@@ -284,7 +284,8 @@ if not st.session_state.authenticated:
                     st.error(f"認証リストの取得に失敗しました: {e}")
     st.stop()
 
-st.title("💖 SHOWROOM ランカーチェッカー")
+# st.title("💖 SHOWROOM ランカーチェッカー")
+st.markdown("<h1 style='font-size:28px; text-align:left; color:#1f2937;'>💖 SHOWROOM ランカーチェッカー</h1>", unsafe_allow_html=True)
 tab1, tab2 = st.tabs(["自動スキャン", "手動ID入力"])
 
 with tab1:

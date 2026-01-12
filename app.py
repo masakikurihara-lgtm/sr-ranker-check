@@ -126,52 +126,31 @@ def _safe_get(data, keys, default_value=None):
         return default_value
     return temp
 
-# --- 表示ロジック（デザイン維持＋ヘッダー固定＋高さ制限） ---
+# --- 表示ロジック ---
 def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=None):
     now_str = datetime.datetime.now(JST).strftime('%Y/%m/%d %H:%M:%S')
     st.caption(f"（取得時刻: {now_str} 現在）")
     
-    # CSS修正: max-heightを追加し、thにstickyを設定して固定
     custom_styles = """
     <style>
     .basic-info-table-wrapper { 
-        width: 100%; 
-        margin: 0 auto; 
-        overflow-y: auto; 
-        max-height: 70vh; /* 画面高さの70%で固定 */
-        border: 1px solid #c5cae9;
+        width: 100%; margin: 0 auto; overflow-y: auto; 
+        max-height: 70vh; border: 1px solid #c5cae9;
     }
-    .basic-info-table { 
-        border-collapse: separate; /* stickyのためにseparateに変更 */
-        border-spacing: 0;
-        width: 100%; 
-    }
+    .basic-info-table { border-collapse: separate; border-spacing: 0; width: 100%; }
     .basic-info-table th { 
-        position: sticky; 
-        top: 0; 
-        z-index: 10;
-        text-align: center !important; 
-        background-color: #e8eaf6; 
-        color: #1a237e; 
-        font-weight: bold; 
-        padding: 8px 10px; 
-        border-bottom: 1px solid #c5cae9; 
-        border-right: 1px solid #c5cae9;
+        position: sticky; top: 0; z-index: 10;
+        text-align: center !important; background-color: #e8eaf6; 
+        color: #1a237e; font-weight: bold; padding: 8px 10px; 
+        border-bottom: 1px solid #c5cae9; border-right: 1px solid #c5cae9;
         white-space: nowrap; 
     }
     .basic-info-table td { 
-        text-align: center !important; 
-        padding: 8px 10px; 
-        line-height: 1.4; 
-        border-bottom: 1px solid #f0f0f0; 
-        border-right: 1px solid #f0f0f0;
-        white-space: nowrap; 
-        font-weight: 600; 
+        text-align: center !important; padding: 8px 10px; line-height: 1.4; 
+        border-bottom: 1px solid #f0f0f0; border-right: 1px solid #f0f0f0;
+        white-space: nowrap; font-weight: 600; 
     }
-    /* 最後の列のボーダーを除去 */
-    .basic-info-table th:last-child, .basic-info-table td:last-child {
-        border-right: none;
-    }
+    .basic-info-table th:last-child, .basic-info-table td:last-child { border-right: none; }
     .basic-info-table tbody tr:hover { background-color: #f7f9fd; }
     .basic-info-highlight-upper { background-color: #e3f2fd !important; color: #0d47a1; }
     .basic-info-highlight-lower { background-color: #fff9c4 !important; color: #795548; }
@@ -180,7 +159,8 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
     """
     st.markdown(custom_styles, unsafe_allow_html=True)
 
-    headers = ["ルーム名", "ルームレベル", "現在のSHOWランク", "上位ランクまでのスコア", "下位ランクまでのスコア", "フォロワー数", "まいにち配信", "ジャンル", "公式 or フリー"]
+    # ユーザーIDを追加
+    headers = ["ルーム名", "ユーザーID", "ルームレベル", "現在のSHOWランク", "上位ランクまでのスコア", "下位ランクまでのスコア", "フォロワー数", "まいにち配信", "ジャンル", "公式 or フリー"]
 
     def is_within_30000(value):
         try: return int(value) <= 30000
@@ -237,7 +217,8 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
         url = f"https://www.showroom-live.com/room/profile?room_id={rid}"
         
         name_cell = f'<a href="{url}" target="_blank" class="room-link">{name}</a>'
-        display_vals = [name_cell, format_value(level), rank, format_value(n_score), format_value(p_score), format_value(fol), format_value(days), gen_name, off_stat]
+        # 表示配列に rid (ユーザーID) を追加
+        display_vals = [name_cell, rid, format_value(level), rank, format_value(n_score), format_value(p_score), format_value(fol), format_value(days), gen_name, off_stat]
         
         td_html = []
         for i, val in enumerate(display_vals):
@@ -246,7 +227,7 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
             elif headers[i] == "下位ランクまでのスコア" and is_within_30000(p_score): cls = "basic-info-highlight-lower"
             td_html.append(f'<td class="{cls}">{val}</td>')
         rows_html.append(f"<tr>{''.join(td_html)}</tr>")
-        csv_data.append([name, level, rank, n_score, p_score, fol, days, gen_name, off_stat])
+        csv_data.append([name, rid, level, rank, n_score, p_score, fol, days, gen_name, off_stat])
 
     col1, col2 = st.columns([3, 1])
     with col1:
@@ -256,19 +237,7 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
             df_dl = pd.DataFrame(csv_data, columns=headers)
             st.download_button("📥 CSVをダウンロード", df_dl.to_csv(index=False).encode('utf-8-sig'), f"showroom_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", "text/csv")
 
-    # テーブルの出力
-    st.markdown(f'''
-    <div class="basic-info-table-wrapper">
-        <table class="basic-info-table">
-            <thead>
-                <tr>{"".join(f"<th>{h}</th>" for h in headers)}</tr>
-            </thead>
-            <tbody>
-                {"".join(rows_html)}
-            </tbody>
-        </table>
-    </div>
-    ''', unsafe_allow_html=True)
+    st.markdown(f'<div class="basic-info-table-wrapper"><table class="basic-info-table"><thead><tr>{"".join(f"<th>{h}</th>" for h in headers)}</tr></thead><tbody>{"".join(rows_html)}</tbody></table></div>', unsafe_allow_html=True)
 
 # --- スキャン実行 ---
 def run_scan(id_list, update_ftp=False, existing_past_ids=None):
@@ -294,7 +263,6 @@ def run_scan(id_list, update_ftp=False, existing_past_ids=None):
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 
-# 未認証時の処理
 if not st.session_state.authenticated:
     st.markdown("<h1 style='font-size:28px; text-align:left; color:#1f2937;'>💖 SHOWROOM 巡回管理システム</h1>", unsafe_allow_html=True)
     st.markdown("##### 🔑 認証コードを入力してください")
@@ -307,7 +275,6 @@ if not st.session_state.authenticated:
                     response = requests.get(ROOM_LIST_URL, timeout=10)
                     response.raise_for_status()
                     valid_codes = set(str(x).strip() for x in pd.read_csv(io.StringIO(response.text), header=None, dtype=str).iloc[:, 0].dropna())
-                    
                     if auth_input.strip() in valid_codes:
                         st.session_state.authenticated = True
                         st.rerun()
@@ -317,7 +284,6 @@ if not st.session_state.authenticated:
                     st.error(f"認証リストの取得に失敗しました: {e}")
     st.stop()
 
-# 認証済み時のメイン画面
 st.title("💖 SHOWROOM ステータス自動巡回ツール")
 tab1, tab2 = st.tabs(["自動スキャン（イベント＋名簿蓄積）", "手動ID入力"])
 
@@ -330,11 +296,17 @@ with tab1:
         
         st.write(f"📁 現在の名簿数: {len(past_ids)} 件")
         
-        with st.spinner("最新イベントからルームを抽出中..."):
+        # --- イベントからのルーム抽出（進捗バー付き） ---
+        with st.spinner("最新イベント一覧を取得中..."):
             event_ids = get_event_ids(session)
-            event_room_ids = set()
-            for eid in event_ids:
+        
+        event_room_ids = set()
+        if event_ids:
+            st.info(f"合計 {len(event_ids)} 件のイベントからルームを抽出しています...")
+            ev_progress = st.progress(0)
+            for i, eid in enumerate(event_ids):
                 event_room_ids.update(get_room_ids_from_event(session, eid))
+                ev_progress.progress((i + 1) / len(event_ids))
         
         total_unique_ids = list(past_ids.union(event_room_ids))
         st.write(f"🔄 検索対象合計（重複排除後）: {len(total_unique_ids)} 件")

@@ -154,13 +154,15 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
     .basic-info-table tbody tr:hover { background-color: #f7f9fd; }
     .basic-info-highlight-upper { background-color: #e3f2fd !important; color: #0d47a1; }
     .basic-info-highlight-lower { background-color: #fff9c4 !important; color: #795548; }
+    /* ランクの境界線スタイル */
+    .rank-boundary td { border-bottom: 3px solid #1a237e !important; }
     .room-link { text-decoration: underline; color: #1f2937; }
     </style>
     """
     st.markdown(custom_styles, unsafe_allow_html=True)
 
-    # ユーザーIDを追加
-    headers = ["ルーム名", "ユーザーID", "ルームレベル", "現在のSHOWランク", "上位ランクまでのスコア", "下位ランクまでのスコア", "フォロワー数", "まいにち配信", "ジャンル", "公式 or フリー"]
+    # 順位を追加
+    headers = ["順位", "ルーム名", "ユーザーID", "ルームレベル", "現在のSHOWランク", "上位ランクまでのスコア", "下位ランクまでのスコア", "フォロワー数", "まいにち配信", "ジャンル", "公式 or フリー"]
 
     def is_within_30000(value):
         try: return int(value) <= 30000
@@ -193,12 +195,13 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
         except Exception as e:
             st.error(f"FTP保存失敗: {e}")
 
+    # ソート実行
     processed_list.sort(key=lambda x: (x["rank_idx"], x["next"]))
 
     rows_html = []
     csv_data = []
 
-    for item in processed_list:
+    for idx, item in enumerate(processed_list):
         p = item["p"]
         rid = item["rid"]
         
@@ -217,17 +220,26 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
         url = f"https://www.showroom-live.com/room/profile?room_id={rid}"
         
         name_cell = f'<a href="{url}" target="_blank" class="room-link">{name}</a>'
-        # 表示配列に rid (ユーザーID) を追加
-        display_vals = [name_cell, rid, format_value(level), rank, format_value(n_score), format_value(p_score), format_value(fol), format_value(days), gen_name, off_stat]
         
+        # 表示用リスト（順位を追加）
+        rank_num = idx + 1
+        display_vals = [rank_num, name_cell, rid, format_value(level), rank, format_value(n_score), format_value(p_score), format_value(fol), format_value(days), gen_name, off_stat]
+        
+        # 次のアイテムとランクが違うかチェックして境界線クラスを付与
+        row_class = ""
+        if idx < len(processed_list) - 1:
+            if item["rank_idx"] != processed_list[idx+1]["rank_idx"]:
+                row_class = ' class="rank-boundary"'
+
         td_html = []
         for i, val in enumerate(display_vals):
             cls = ""
             if headers[i] == "上位ランクまでのスコア" and is_within_30000(n_score): cls = "basic-info-highlight-upper"
             elif headers[i] == "下位ランクまでのスコア" and is_within_30000(p_score): cls = "basic-info-highlight-lower"
             td_html.append(f'<td class="{cls}">{val}</td>')
-        rows_html.append(f"<tr>{''.join(td_html)}</tr>")
-        csv_data.append([name, rid, level, rank, n_score, p_score, fol, days, gen_name, off_stat])
+        
+        rows_html.append(f"<tr{row_class}>{''.join(td_html)}</tr>")
+        csv_data.append([rank_num, name, rid, level, rank, n_score, p_score, fol, days, gen_name, off_stat])
 
     col1, col2 = st.columns([3, 1])
     with col1:
@@ -284,12 +296,10 @@ if not st.session_state.authenticated:
                     st.error(f"認証リストの取得に失敗しました: {e}")
     st.stop()
 
-# st.title("💖 SHOWROOM ランカーチェッカー")
 st.markdown("<h1 style='font-size:28px; text-align:left; color:#1f2937;'>💖 SHOWROOM ランカーチェッカー</h1>", unsafe_allow_html=True)
 tab1, tab2 = st.tabs(["自動スキャン", "手動ID入力"])
 
 with tab1:
-    # st.markdown("「最新のイベント参加者」＋「過去に見つけたB-5以上」を合算して精査・蓄積します。")
     if st.button("🚀 スキャン開始（名簿蓄積実行）"):
         session = create_session()
         with get_ftp_connection() as ftp:
@@ -297,13 +307,11 @@ with tab1:
         
         st.write(f"📁 現在の名簿数: {len(past_ids)} 件")
         
-        # --- イベントからのルーム抽出（進捗バー付き） ---
         with st.spinner("対象ルーム候補を取得中..."):
             event_ids = get_event_ids(session)
         
         event_room_ids = set()
         if event_ids:
-            # st.info(f"合計 {len(event_ids)} 件のイベントからルームを抽出しています...")
             st.info(f"対象ルーム候補を取得しています...")
             ev_progress = st.progress(0)
             for i, eid in enumerate(event_ids):

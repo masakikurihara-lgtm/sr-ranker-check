@@ -11,6 +11,7 @@ from urllib3.util import Retry
 from ftplib import FTP
 from io import StringIO, BytesIO
 
+# 日本時間の定義
 JST = datetime.timezone(datetime.timedelta(hours=9))
 
 # --- 設定 ---
@@ -113,18 +114,16 @@ def get_room_ids_from_event(session, event_id):
 def get_room_data_combined(room_id, session):
     """プロフィールとファン情報を一括取得"""
     profile_url = ROOM_PROFILE_API.format(room_id=room_id)
-    # 現在の月を取得 (JST)
+    # 取得時の日本時間をベースに年月(YM)を生成
     month_str = datetime.datetime.now(JST).strftime('%Y%m')
     fan_url = FAN_INFO_API.format(room_id=room_id, month=month_str)
     
     result = {"profile": None, "fan": None}
     try:
-        # プロフィール取得
         p_res = session.get(profile_url, timeout=10)
         if p_res.status_code == 200:
             result["profile"] = p_res.json()
-            
-            # ランクがB-5以上の時のみファン情報を取得（パフォーマンス最適化）
+            # ランク対象者のみファン情報を取得
             rank = _safe_get(result["profile"], ["show_rank_subdivided"], "-")
             if rank in RANK_ORDER:
                 f_res = session.get(fan_url, timeout=10)
@@ -145,7 +144,9 @@ def _safe_get(data, keys, default_value=None):
 
 # --- 表示ロジック ---
 def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=None):
-    now_str = datetime.datetime.now(JST).strftime('%Y/%m/%d %H:%M:%S')
+    # 表示用の日本時間
+    now_jst = datetime.datetime.now(JST)
+    now_str = now_jst.strftime('%Y/%m/%d %H:%M:%S')
     st.caption(f"（取得時刻: {now_str} 現在）")
     
     custom_styles = """
@@ -177,7 +178,6 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
     """
     st.markdown(custom_styles, unsafe_allow_html=True)
 
-    # ヘッダーにファン項目を追加
     headers = [
         "順位", "ルーム名", "ユーザーID", "ルームレベル", "現在のSHOWランク", 
         "上位ランクまでのスコア", "下位ランクまでのスコア", "ファン数", "ファンパワー", 
@@ -236,7 +236,6 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
         n_score = _safe_get(p, ["next_score"], "-")
         p_score = _safe_get(p, ["prev_score"], "-")
         
-        # ファン情報
         fan_count = _safe_get(f, ["total_user_count"], "-")
         fan_power = _safe_get(f, ["fan_power"], "-")
         
@@ -252,7 +251,6 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
         name_cell = f'<a href="{url}" target="_blank" class="room-link">{name}</a>'
         rank_num = idx + 1
         
-        # 表示配列
         display_vals = [
             rank_num, name_cell, rid, format_value(level), rank, 
             format_value(n_score), format_value(p_score), format_value(fan_count), format_value(fan_power),
@@ -282,7 +280,14 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
     with col2:
         if csv_data:
             df_dl = pd.DataFrame(csv_data, columns=headers)
-            st.download_button("📥 CSVをダウンロード", df_dl.to_csv(index=False).encode('utf-8-sig'), f"showroom_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", "text/csv")
+            # 日本時間のタイムスタンプをファイル名に使用
+            file_ts = now_jst.strftime('%Y%m%d_%H%M%S')
+            st.download_button(
+                label="📥 CSVをダウンロード",
+                data=df_dl.to_csv(index=False).encode('utf-8-sig'),
+                file_name=f"showroom_{file_ts}.csv",
+                mime="text/csv"
+            )
 
     st.markdown(f'<div class="basic-info-table-wrapper"><table class="basic-info-table"><thead><tr>{"".join(f"<th>{h}</th>" for h in headers)}</tr></thead><tbody>{"".join(rows_html)}</tbody></table></div>', unsafe_allow_html=True)
 
@@ -296,7 +301,6 @@ def run_scan(id_list, update_ftp=False, existing_past_ids=None):
     st.info(f"合計 {len(id_list)} 件のステータスを確認中...")
     progress_bar = st.progress(0)
     
-    # max_workersを少し調整（APIリクエスト数が2倍になるため負荷考慮）
     with ThreadPoolExecutor(max_workers=30) as executor:
         futures = {executor.submit(get_room_data_combined, rid, session): rid for rid in id_list}
         for i, future in enumerate(as_completed(futures)):

@@ -23,6 +23,7 @@ ROOM_LIST_URL = "https://mksoul-pro.com/showroom/file/room_list.csv"
 EVENT_SEARCH_API = "https://www.showroom-live.com/api/event/search"
 EVENT_ROOM_LIST_API = "https://www.showroom-live.com/api/event/room_list"
 ROOM_PROFILE_API = "https://www.showroom-live.com/api/room/profile?room_id={room_id}"
+FAN_INFO_API = "https://www.showroom-live.com/api/active_fan/users?room_id={room_id}&ym={month}&offset=0&limit=1"
 FTP_FILE_PATH = "/mksoul-pro.com/showroom/file/ranker_liver_list.csv"
 
 GENRE_MAP = {
@@ -109,13 +110,29 @@ def get_room_ids_from_event(session, event_id):
         except: break
     return room_ids
 
-def get_room_profile(room_id, session):
-    url = ROOM_PROFILE_API.format(room_id=room_id)
+def get_room_data_combined(room_id, session):
+    """プロフィールとファン情報を一括取得"""
+    profile_url = ROOM_PROFILE_API.format(room_id=room_id)
+    # 現在の月を取得 (JST)
+    month_str = datetime.datetime.now(JST).strftime('%Y%m')
+    fan_url = FAN_INFO_API.format(room_id=room_id, month=month_str)
+    
+    result = {"profile": None, "fan": None}
     try:
-        response = session.get(url, timeout=10)
-        return response.json()
+        # プロフィール取得
+        p_res = session.get(profile_url, timeout=10)
+        if p_res.status_code == 200:
+            result["profile"] = p_res.json()
+            
+            # ランクがB-5以上の時のみファン情報を取得（パフォーマンス最適化）
+            rank = _safe_get(result["profile"], ["show_rank_subdivided"], "-")
+            if rank in RANK_ORDER:
+                f_res = session.get(fan_url, timeout=10)
+                if f_res.status_code == 200:
+                    result["fan"] = f_res.json()
+        return result
     except:
-        return None
+        return result
 
 def _safe_get(data, keys, default_value=None):
     temp = data
@@ -154,15 +171,18 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
     .basic-info-table tbody tr:hover { background-color: #f7f9fd; }
     .basic-info-highlight-upper { background-color: #e3f2fd !important; color: #0d47a1; }
     .basic-info-highlight-lower { background-color: #fff9c4 !important; color: #795548; }
-    /* ランクの境界線スタイル */
     .rank-boundary td { border-bottom: 3px solid #1a237e !important; }
     .room-link { text-decoration: underline; color: #1f2937; }
     </style>
     """
     st.markdown(custom_styles, unsafe_allow_html=True)
 
-    # 順位を追加
-    headers = ["順位", "ルーム名", "ユーザーID", "ルームレベル", "現在のSHOWランク", "上位ランクまでのスコア", "下位ランクまでのスコア", "フォロワー数", "まいにち配信", "ジャンル", "公式 or フリー"]
+    # ヘッダーにファン項目を追加
+    headers = [
+        "順位", "ルーム名", "ユーザーID", "ルームレベル", "現在のSHOWランク", 
+        "上位ランクまでのスコア", "下位ランクまでのスコア", "ファン数", "ファンパワー", 
+        "フォロワー数", "まいにち配信", "ジャンル", "公式 or フリー"
+    ]
 
     def is_within_30000(value):
         try: return int(value) <= 30000
@@ -176,13 +196,18 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
     processed_list = []
     found_b5_above_ids = set()
     
-    for rid, p in all_room_data.items():
+    for rid, data in all_room_data.items():
+        p = data.get("profile")
         if not p: continue
+        
         rank = _safe_get(p, ["show_rank_subdivided"], "-")
         if rank in RANK_ORDER:
             found_b5_above_ids.add(str(rid))
             processed_list.append({
-                "rid": rid, "p": p, "rank_idx": RANK_ORDER.index(rank),
+                "rid": rid, 
+                "p": p, 
+                "f": data.get("fan"),
+                "rank_idx": RANK_ORDER.index(rank),
                 "next": int(_safe_get(p, ["next_score"], 99999999))
             })
 
@@ -195,7 +220,6 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
         except Exception as e:
             st.error(f"FTP保存失敗: {e}")
 
-    # ソート実行
     processed_list.sort(key=lambda x: (x["rank_idx"], x["next"]))
 
     rows_html = []
@@ -203,6 +227,7 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
 
     for idx, item in enumerate(processed_list):
         p = item["p"]
+        f = item["f"]
         rid = item["rid"]
         
         name = _safe_get(p, ["room_name"], "取得失敗")
@@ -210,6 +235,11 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
         rank = _safe_get(p, ["show_rank_subdivided"], "-")
         n_score = _safe_get(p, ["next_score"], "-")
         p_score = _safe_get(p, ["prev_score"], "-")
+        
+        # ファン情報
+        fan_count = _safe_get(f, ["total_user_count"], "-")
+        fan_power = _safe_get(f, ["fan_power"], "-")
+        
         fol = _safe_get(p, ["follower_num"], "-")
         days = _safe_get(p, ["live_continuous_days"], "-")
         is_official = _safe_get(p, ["is_official"], None)
@@ -220,12 +250,15 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
         url = f"https://www.showroom-live.com/room/profile?room_id={rid}"
         
         name_cell = f'<a href="{url}" target="_blank" class="room-link">{name}</a>'
-        
-        # 表示用リスト（順位を追加）
         rank_num = idx + 1
-        display_vals = [rank_num, name_cell, rid, format_value(level), rank, format_value(n_score), format_value(p_score), format_value(fol), format_value(days), gen_name, off_stat]
         
-        # 次のアイテムとランクが違うかチェックして境界線クラスを付与
+        # 表示配列
+        display_vals = [
+            rank_num, name_cell, rid, format_value(level), rank, 
+            format_value(n_score), format_value(p_score), format_value(fan_count), format_value(fan_power),
+            format_value(fol), format_value(days), gen_name, off_stat
+        ]
+        
         row_class = ""
         if idx < len(processed_list) - 1:
             if item["rank_idx"] != processed_list[idx+1]["rank_idx"]:
@@ -239,7 +272,9 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
             td_html.append(f'<td class="{cls}">{val}</td>')
         
         rows_html.append(f"<tr{row_class}>{''.join(td_html)}</tr>")
-        csv_data.append([rank_num, name, rid, level, rank, n_score, p_score, fol, days, gen_name, off_stat])
+        csv_data.append([
+            rank_num, name, rid, level, rank, n_score, p_score, fan_count, fan_power, fol, days, gen_name, off_stat
+        ])
 
     col1, col2 = st.columns([3, 1])
     with col1:
@@ -261,12 +296,14 @@ def run_scan(id_list, update_ftp=False, existing_past_ids=None):
     st.info(f"合計 {len(id_list)} 件のステータスを確認中...")
     progress_bar = st.progress(0)
     
-    with ThreadPoolExecutor(max_workers=40) as executor:
-        futures = {executor.submit(get_room_profile, rid, session): rid for rid in id_list}
+    # max_workersを少し調整（APIリクエスト数が2倍になるため負荷考慮）
+    with ThreadPoolExecutor(max_workers=30) as executor:
+        futures = {executor.submit(get_room_data_combined, rid, session): rid for rid in id_list}
         for i, future in enumerate(as_completed(futures)):
             rid = futures[future]
             res = future.result()
-            if res: all_results[rid] = res
+            if res and res.get("profile"):
+                all_results[rid] = res
             progress_bar.progress((i + 1) / len(id_list))
     
     display_multiple_results(all_results, update_ftp, existing_past_ids)

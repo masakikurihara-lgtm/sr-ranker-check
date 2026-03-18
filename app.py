@@ -364,6 +364,7 @@ with tab1:
         
         with st.spinner("対象ルーム候補を取得中..."):
             event_ids = get_event_ids(session)
+            onlive_ids = get_onlive_room_ids(session)
         
         event_room_ids = set()
         if event_ids:

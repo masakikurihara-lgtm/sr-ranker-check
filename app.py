@@ -26,6 +26,7 @@ EVENT_ROOM_LIST_API = "https://www.showroom-live.com/api/event/room_list"
 ROOM_PROFILE_API = "https://www.showroom-live.com/api/room/profile?room_id={room_id}"
 FAN_INFO_API = "https://www.showroom-live.com/api/active_fan/users?room_id={room_id}&ym={month}&offset=0&limit=1"
 FTP_FILE_PATH = "/mksoul-pro.com/showroom/file/ranker_liver_list.csv"
+ONLIVE_API = "https://www.showroom-live.com/api/live/onlives"
 
 GENRE_MAP = {
     112: "ミュージック", 102: "アイドル", 103: "タレント", 104: "声優",
@@ -38,7 +39,8 @@ RANK_ORDER = ["SS-5", "SS-4", "SS-3", "SS-2", "SS-1", "S-5", "S-4", "S-3", "S-2"
 # --- 通信セッション ---
 def create_session():
     session = requests.Session()
-    retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+    # retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+    retries = Retry(total=5, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
     session.mount("https://", HTTPAdapter(max_retries=retries))
     session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36'})
     return session
@@ -80,7 +82,7 @@ def get_event_ids(session):
     event_ids = set()
     for status in [1, 3, 4]:
         page = 1
-        while page <= 5: 
+        while page <= 10: 
             try:
                 res = session.get(f"{EVENT_SEARCH_API}?status={status}&page={page}", timeout=10)
                 data = res.json()
@@ -92,6 +94,18 @@ def get_event_ids(session):
                 page += 1
             except: break
     return list(event_ids)
+
+def get_onlive_room_ids(session):
+    onlive_ids = set()
+    try:
+        res = session.get(ONLIVE_API, timeout=10)
+        if res.status_code == 200:
+            for g in res.json().get("onlives", []):
+                for l in g.get("lives", []):
+                    rid = l.get("room_id")
+                    if rid: onlive_ids.add(str(rid))
+    except: pass
+    return onlive_ids
 
 def get_room_ids_from_event(session, event_id):
     room_ids = set()
@@ -359,7 +373,8 @@ with tab1:
                 event_room_ids.update(get_room_ids_from_event(session, eid))
                 ev_progress.progress((i + 1) / len(event_ids))
         
-        total_unique_ids = list(past_ids.union(event_room_ids))
+        # total_unique_ids = list(past_ids.union(event_room_ids))
+        total_unique_ids = list(past_ids.union(event_room_ids).union(onlive_ids))
         st.write(f"🔄 検索対象合計（重複排除後）: {len(total_unique_ids)} 件")
         
         run_scan(total_unique_ids, update_ftp=True, existing_past_ids=past_ids)

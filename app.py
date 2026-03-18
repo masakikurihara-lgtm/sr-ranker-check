@@ -80,7 +80,7 @@ def get_event_ids(session):
     event_ids = set()
     for status in [1, 3, 4]:
         page = 1
-        while page <= 10: 
+        while page <= 5: 
             try:
                 res = session.get(f"{EVENT_SEARCH_API}?status={status}&page={page}", timeout=10)
                 data = res.json()
@@ -301,7 +301,7 @@ def run_scan(id_list, update_ftp=False, existing_past_ids=None):
     st.info(f"合計 {len(id_list)} 件のステータスを確認中...")
     progress_bar = st.progress(0)
     
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=30) as executor:
         futures = {executor.submit(get_room_data_combined, rid, session): rid for rid in id_list}
         for i, future in enumerate(as_completed(futures)):
             rid = futures[future]

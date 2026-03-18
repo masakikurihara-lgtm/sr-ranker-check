@@ -23,8 +23,6 @@ st.set_page_config(
 ROOM_LIST_URL = "https://mksoul-pro.com/showroom/file/room_list.csv"
 EVENT_SEARCH_API = "https://www.showroom-live.com/api/event/search"
 EVENT_ROOM_LIST_API = "https://www.showroom-live.com/api/event/room_list"
-# オンライブ取得APIを追加
-ONLIVE_API = "https://www.showroom-live.com/api/live/onlives"
 ROOM_PROFILE_API = "https://www.showroom-live.com/api/room/profile?room_id={room_id}"
 FAN_INFO_API = "https://www.showroom-live.com/api/active_fan/users?room_id={room_id}&ym={month}&offset=0&limit=1"
 FTP_FILE_PATH = "/mksoul-pro.com/showroom/file/ranker_liver_list.csv"
@@ -40,13 +38,12 @@ RANK_ORDER = ["SS-5", "SS-4", "SS-3", "SS-2", "SS-1", "S-5", "S-4", "S-3", "S-2"
 # --- 通信セッション ---
 def create_session():
     session = requests.Session()
-    # 欠落防止のため、リトライ対象に429(過多アクセス)を追加し、元コードの5xx系も維持
-    retries = Retry(total=5, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
+    retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
     session.mount("https://", HTTPAdapter(max_retries=retries))
     session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36'})
     return session
 
-# --- FTP関連関数 --- (元コードを維持)
+# --- FTP関連関数 ---
 def get_ftp_connection():
     ftp_host = st.secrets["ftp"]["host"]
     ftp_user = st.secrets["ftp"]["user"]
@@ -78,23 +75,7 @@ def upload_ranker_ids(ftp, id_set):
     except Exception as e:
         st.error(f"FTP保存エラー: {e}")
 
-# --- API抽出ロジック --- (元コード＋オンライブ追加)
-
-def get_onlive_room_ids(session):
-    """追加ステップ：現在配信中の全ルームIDを収集"""
-    onlive_ids = set()
-    try:
-        res = session.get(ONLIVE_API, timeout=10)
-        if res.status_code == 200:
-            data = res.json()
-            for genre in data.get("onlives", []):
-                for live in genre.get("lives", []):
-                    rid = live.get("room_id")
-                    if rid: onlive_ids.add(str(rid))
-    except:
-        pass
-    return onlive_ids
-
+# --- API抽出ロジック ---
 def get_event_ids(session):
     event_ids = set()
     for status in [1, 3, 4]:
@@ -133,6 +114,7 @@ def get_room_ids_from_event(session, event_id):
 def get_room_data_combined(room_id, session):
     """プロフィールとファン情報を一括取得"""
     profile_url = ROOM_PROFILE_API.format(room_id=room_id)
+    # 取得時の日本時間をベースに年月(YM)を生成
     month_str = datetime.datetime.now(JST).strftime('%Y%m')
     fan_url = FAN_INFO_API.format(room_id=room_id, month=month_str)
     
@@ -141,6 +123,7 @@ def get_room_data_combined(room_id, session):
         p_res = session.get(profile_url, timeout=10)
         if p_res.status_code == 200:
             result["profile"] = p_res.json()
+            # ランク対象者のみファン情報を取得
             rank = _safe_get(result["profile"], ["show_rank_subdivided"], "-")
             if rank in RANK_ORDER:
                 f_res = session.get(fan_url, timeout=10)
@@ -159,8 +142,9 @@ def _safe_get(data, keys, default_value=None):
         return default_value
     return temp
 
-# --- 表示ロジック --- (元コードのスタイル・ロジックを完全復元)
+# --- 表示ロジック ---
 def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=None):
+    # 表示用の日本時間
     now_jst = datetime.datetime.now(JST)
     now_str = now_jst.strftime('%Y/%m/%d %H:%M:%S')
     st.caption(f"（取得時刻: {now_str} 現在）")
@@ -296,6 +280,7 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
     with col2:
         if csv_data:
             df_dl = pd.DataFrame(csv_data, columns=headers)
+            # 日本時間のタイムスタンプをファイル名に使用
             file_ts = now_jst.strftime('%Y%m%d_%H%M%S')
             st.download_button(
                 label="📥 CSVをダウンロード",
@@ -306,7 +291,7 @@ def display_multiple_results(all_room_data, update_ftp=False, existing_past_ids=
 
     st.markdown(f'<div class="basic-info-table-wrapper"><table class="basic-info-table"><thead><tr>{"".join(f"<th>{h}</th>" for h in headers)}</tr></thead><tbody>{"".join(rows_html)}</tbody></table></div>', unsafe_allow_html=True)
 
-# --- スキャン実行 --- (30並列を完全維持)
+# --- スキャン実行 ---
 def run_scan(id_list, update_ftp=False, existing_past_ids=None):
     if not id_list:
         st.warning("処理対象のIDがありません。")
@@ -327,7 +312,7 @@ def run_scan(id_list, update_ftp=False, existing_past_ids=None):
     
     display_multiple_results(all_results, update_ftp, existing_past_ids)
 
-# --- 認証 & UI メインロジック --- (元コードを維持)
+# --- 認証 & UI メインロジック ---
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 
@@ -365,8 +350,6 @@ with tab1:
         
         with st.spinner("対象ルーム候補を取得中..."):
             event_ids = get_event_ids(session)
-            # ここでオンライブのルームIDも取得（欠落防止）
-            onlive_ids = get_onlive_room_ids(session)
         
         event_room_ids = set()
         if event_ids:
@@ -376,8 +359,7 @@ with tab1:
                 event_room_ids.update(get_room_ids_from_event(session, eid))
                 ev_progress.progress((i + 1) / len(event_ids))
         
-        # 名簿 ＋ イベント参加者 ＋ オンライブ(追加分) をすべて合算
-        total_unique_ids = list(past_ids.union(event_room_ids).union(onlive_ids))
+        total_unique_ids = list(past_ids.union(event_room_ids))
         st.write(f"🔄 検索対象合計（重複排除後）: {len(total_unique_ids)} 件")
         
         run_scan(total_unique_ids, update_ftp=True, existing_past_ids=past_ids)
